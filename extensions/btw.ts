@@ -1,7 +1,6 @@
 import {
   buildSessionContext,
   createAgentSession,
-  createExtensionRuntime,
   codingTools,
   SessionManager,
   type AgentSession,
@@ -9,7 +8,6 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
-  type ResourceLoader,
   DefaultResourceLoader,
   getAgentDir,
   type LoadExtensionsResult,
@@ -210,60 +208,31 @@ function matchesAnyGlob(candidates: string[], patterns: string[]): boolean {
 function createBtwResourceLoader(
   ctx: ExtensionCommandContext,
   appendSystemPrompt: string[] = [BTW_SYSTEM_PROMPT],
-): ResourceLoader {
+): DefaultResourceLoader {
   const config = parseBtwResourceConfig();
   const systemPrompt = stripDynamicSystemPromptFooter(ctx.getSystemPrompt());
 
-  let skillsLoader: DefaultResourceLoader | null = null;
-  let extensionsLoader: DefaultResourceLoader | null = null;
-
-  if (config.skillsEnabled) {
-    skillsLoader = new DefaultResourceLoader({
-      cwd: ctx.cwd,
-      agentDir: getAgentDir(),
-      noExtensions: true,
-      noPromptTemplates: true,
-      noThemes: true,
-    });
-  }
-
-  if (config.extensionPatterns !== null) {
-    extensionsLoader = new DefaultResourceLoader({
-      cwd: ctx.cwd,
-      agentDir: getAgentDir(),
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-      extensionsOverride: (base: LoadExtensionsResult): LoadExtensionsResult => {
-        if (config.extensionPatterns === null) return base;
-        const filtered = base.extensions.filter((ext) =>
+  return new DefaultResourceLoader({
+    cwd: ctx.cwd,
+    agentDir: getAgentDir(),
+    noSkills: !config.skillsEnabled,
+    noPromptTemplates: true,
+    noThemes: true,
+    extensionsOverride: (base: LoadExtensionsResult): LoadExtensionsResult => {
+      if (config.extensionPatterns === null) {
+        return { ...base, extensions: [] };
+      }
+      return {
+        ...base,
+        extensions: base.extensions.filter((ext) =>
           matchesAnyGlob(extensionName(ext), config.extensionPatterns!),
-        );
-        return { ...base, extensions: filtered };
-      },
-    });
-  }
-
-  const baseExtensionsResult: LoadExtensionsResult = {
-    extensions: [],
-    errors: [],
-    runtime: createExtensionRuntime(),
-  };
-
-  return {
-    getExtensions: () => extensionsLoader?.getExtensions() ?? baseExtensionsResult,
-    getSkills: () => skillsLoader?.getSkills() ?? { skills: [], diagnostics: [] },
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => systemPrompt,
-    getAppendSystemPrompt: () => appendSystemPrompt,
-    extendResources: () => {},
-    reload: async () => {
-      await skillsLoader?.reload();
-      await extensionsLoader?.reload();
+        ),
+      };
     },
-  };
+    agentsFilesOverride: () => ({ agentsFiles: [] }),
+    systemPromptOverride: () => systemPrompt,
+    appendSystemPromptOverride: () => appendSystemPrompt,
+  });
 }
 
 function extractText(parts: AssistantMessage["content"], type: "text" | "thinking"): string {
