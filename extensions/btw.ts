@@ -1227,8 +1227,11 @@ class BtwOverlayComponent extends Container implements Focusable {
     // the row stays geometrically stable while the overlay still owns keyboard input.
     this.input.focused = false;
     try {
-      const inputLine = this.input.render(targetWidth)[0] ?? "";
-      return `${this.theme.fg("borderMuted", "│")}${inputLine}${this.theme.fg("borderMuted", "│")}`;
+      const rawInputLine = this.input.render(targetWidth)[0] ?? "";
+      // Truncate input render output to prevent lines exceeding dialog width
+      const inputLine = truncateToWidth(rawInputLine, targetWidth, "");
+      const padding = Math.max(0, targetWidth - visibleWidth(inputLine));
+      return `${this.theme.fg("borderMuted", "│")}${inputLine}${" ".repeat(padding)}${this.theme.fg("borderMuted", "│")}`;
     } finally {
       this.input.focused = previousFocused;
     }
@@ -1284,7 +1287,13 @@ class BtwOverlayComponent extends Container implements Focusable {
     lines.push(this.frameLine(this.theme.fg("dim", this.hintsTextValue.trim()), innerWidth));
     lines.push(this.borderLine(innerWidth, "bottom"));
 
-    return lines;
+    // Safety: clamp every line to dialogWidth to prevent TUI crash
+    return lines.map((line) => {
+      if (visibleWidth(line) > dialogWidth) {
+        return truncateToWidth(line, dialogWidth, "");
+      }
+      return line;
+    });
   }
 
   setDraft(value: string): void {
