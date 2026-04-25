@@ -1,7 +1,8 @@
 import {
   buildSessionContext,
   createAgentSession,
-  codingTools,
+  createCodingTools,
+  createReadOnlyTools,
   SessionManager,
   type AgentSession,
   type AgentSessionEvent,
@@ -1623,7 +1624,7 @@ export default function (pi: ExtensionAPI) {
       model: settings.model,
       modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
       thinkingLevel: settings.thinkingLevel,
-      tools: codingTools,
+      tools: [...createCodingTools(ctx.cwd), ...createReadOnlyTools(ctx.cwd)],
       resourceLoader: await createLoadedBtwResourceLoader(ctx),
     });
 
