@@ -188,16 +188,21 @@ function parseBtwResourceConfig(): BtwResourceConfig {
 }
 
 function extensionName(ext: { path: string; sourceInfo: { source: string } }): string[] {
-  const base = ext.path.split("/").pop() ?? ext.path;
+  const pathParts = ext.path.split(/[\\/]+/).filter(Boolean);
+  const base = pathParts.at(-1) ?? ext.path;
   const stem = base.replace(/\.[^.]+$/, "");
   const source = ext.sourceInfo.source;
-  // Strip npm:/git: scheme prefix so "pi-claude-oauth-adapter" matches "npm:pi-claude-oauth-adapter"
+  // Strip npm:/git: scheme prefix so "pi-claude-oauth-adapter" matches "npm:pi-claude-oauth-adapter".
   const withoutScheme = source.replace(/^(npm:|git:)/, "");
-  // Strip npm scope so "pi-processes" matches "npm:@aliou/pi-processes"
+  // Strip npm scope so "pi-processes" matches "npm:@aliou/pi-processes".
   const unscoped = withoutScheme.replace(/^@[^/]+\//, "");
-  // For git sources (github.com/owner/repo) also try just the repo name
+  // For git sources (github.com/owner/repo) also try just the repo name.
   const repoName = withoutScheme.split("/").pop() ?? withoutScheme;
-  return [...new Set([source, withoutScheme, unscoped, repoName, stem, ext.path])];
+  // DefaultResourceLoader applies package sourceInfo after extensionsOverride runs.
+  // During filtering, npm package extensions can still look like source="local"
+  // and path=".../node_modules/pi-claude-oauth-adapter/extensions/index.ts".
+  // Include path segments so exact package names still match then.
+  return [...new Set([source, withoutScheme, unscoped, repoName, stem, ...pathParts, ext.path])];
 }
 
 function matchesGlob(value: string, pattern: string): boolean {
