@@ -246,6 +246,15 @@ function createBtwResourceLoader(
   });
 }
 
+async function createLoadedBtwResourceLoader(
+  ctx: ExtensionCommandContext,
+  appendSystemPrompt?: string[],
+): Promise<DefaultResourceLoader> {
+  const loader = createBtwResourceLoader(ctx, appendSystemPrompt);
+  await loader.reload();
+  return loader;
+}
+
 function extractText(parts: AssistantMessage["content"], type: "text" | "thinking"): string {
   const chunks: string[] = [];
 
@@ -1606,7 +1615,7 @@ export default function (pi: ExtensionAPI) {
       modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
       thinkingLevel: settings.thinkingLevel,
       tools: codingTools,
-      resourceLoader: createBtwResourceLoader(ctx),
+      resourceLoader: await createLoadedBtwResourceLoader(ctx),
     });
 
     const { messages: seedMessages, sideThreadStartIndex } = buildBtwSeedState(ctx, pendingThread, mode, settings.model);
@@ -2143,7 +2152,7 @@ export default function (pi: ExtensionAPI) {
       modelRegistry: ctx.modelRegistry as AgentSession["modelRegistry"],
       thinkingLevel: "off",
       tools: [],
-      resourceLoader: createBtwResourceLoader(ctx, [BTW_SUMMARIZE_SYSTEM_PROMPT]),
+      resourceLoader: await createLoadedBtwResourceLoader(ctx, [BTW_SUMMARIZE_SYSTEM_PROMPT]),
     });
 
     try {
@@ -2296,8 +2305,7 @@ export default function (pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       const config = parseBtwResourceConfig();
       const configLine = `PI_BTW_SKILLS_ENABLED=${config.skillsEnabled} | PI_BTW_EXTENSIONS_INCLUDE=${config.extensionPatterns?.join(",") ?? "(unset)"}`;
-      const loader = createBtwResourceLoader(ctx as ExtensionCommandContext);
-      await loader.reload();
+      const loader = await createLoadedBtwResourceLoader(ctx as ExtensionCommandContext);
       const { skills } = loader.getSkills();
       const { extensions } = loader.getExtensions();
       const skillNames = skills.length > 0 ? skills.map((s) => s.name).join(", ") : "none";
