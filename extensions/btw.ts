@@ -2317,6 +2317,7 @@ export default function (pi: ExtensionAPI) {
       const config = parseBtwResourceConfig();
       const configLine = `PI_BTW_SKILLS_ENABLED=${config.skillsEnabled} | PI_BTW_EXTENSIONS_INCLUDE=${config.extensionPatterns?.join(",") ?? "(unset)"}`;
       const loader = createBtwResourceLoader(ctx as ExtensionCommandContext);
+      await loader.reload();
       const { skills } = loader.getSkills();
       const { extensions } = loader.getExtensions();
       const skillNames = skills.length > 0 ? skills.map((s) => s.name).join(", ") : "none";
