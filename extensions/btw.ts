@@ -2312,18 +2312,16 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.registerCommand("btw:debug", {
-    description: "Show skills and extensions loaded in the active BTW sub-session.",
+    description: "Show env var config and what skills/extensions would load in a BTW sub-session.",
     handler: async (_args, ctx) => {
-      if (!activeBtwSession) {
-        notify(ctx, "No active BTW sub-session. Run /btw first.", "warning");
-        return;
-      }
-      const loader = activeBtwSession.session.resourceLoader;
+      const config = parseBtwResourceConfig();
+      const configLine = `PI_BTW_SKILLS_ENABLED=${config.skillsEnabled} | PI_BTW_EXTENSIONS_INCLUDE=${config.extensionPatterns?.join(",") ?? "(unset)"}`;
+      const loader = createBtwResourceLoader(ctx as ExtensionCommandContext);
       const { skills } = loader.getSkills();
       const { extensions } = loader.getExtensions();
       const skillNames = skills.length > 0 ? skills.map((s) => s.name).join(", ") : "none";
       const extNames = extensions.length > 0 ? extensions.map((e) => e.sourceInfo.source).join(", ") : "none";
-      const message = `BTW sub-session — skills (${skills.length}): ${skillNames} | extensions (${extensions.length}): ${extNames}`;
+      const message = `${configLine} | skills (${skills.length}): ${skillNames} | extensions (${extensions.length}): ${extNames}`;
       setOverlayStatus(message, ctx);
       notify(ctx, message, "info");
     },
