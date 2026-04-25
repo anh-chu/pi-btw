@@ -188,10 +188,16 @@ function parseBtwResourceConfig(): BtwResourceConfig {
 }
 
 function extensionName(ext: { path: string; sourceInfo: { source: string } }): string[] {
-  // Returns candidate names to match against patterns
   const base = ext.path.split("/").pop() ?? ext.path;
-  const stem = base.replace(/\.[^.]+$/, ""); // strip extension
-  return [ext.sourceInfo.source, stem, ext.path];
+  const stem = base.replace(/\.[^.]+$/, "");
+  const source = ext.sourceInfo.source;
+  // Strip npm:/git: scheme prefix so "pi-claude-oauth-adapter" matches "npm:pi-claude-oauth-adapter"
+  const withoutScheme = source.replace(/^(npm:|git:)/, "");
+  // Strip npm scope so "pi-processes" matches "npm:@aliou/pi-processes"
+  const unscoped = withoutScheme.replace(/^@[^/]+\//, "");
+  // For git sources (github.com/owner/repo) also try just the repo name
+  const repoName = withoutScheme.split("/").pop() ?? withoutScheme;
+  return [...new Set([source, withoutScheme, unscoped, repoName, stem, ext.path])];
 }
 
 function matchesGlob(value: string, pattern: string): boolean {
