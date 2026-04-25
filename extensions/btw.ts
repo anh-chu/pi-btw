@@ -10,6 +10,9 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
   type ResourceLoader,
+  DefaultResourceLoader,
+  getAgentDir,
+  type LoadExtensionsResult,
 } from "@mariozechner/pi-coding-agent";
 import { type AssistantMessage, type Message, type ThinkingLevel as AiThinkingLevel, type UserMessage } from "@mariozechner/pi-ai";
 import {
@@ -165,23 +168,101 @@ function stripDynamicSystemPromptFooter(systemPrompt: string): string {
     .trim();
 }
 
+type BtwResourceConfig = {
+  skillsEnabled: boolean;
+  extensionPatterns: string[] | null; // null means extensions disabled, ["*"] means all
+};
+
+function parseBtwResourceConfig(): BtwResourceConfig {
+  const raw = process.env["PI_BTW_SKILLS_ENABLED"]?.trim().toLowerCase();
+  const skillsEnabled = raw === "true" || raw === "1";
+
+  const extRaw = process.env["PI_BTW_EXTENSIONS_INCLUDE"]?.trim();
+  const extensionPatterns =
+    extRaw && extRaw.length > 0
+      ? extRaw
+          .split(",")
+          .map((p) => p.trim())
+          .filter((p) => p.length > 0)
+      : null;
+
+  return { skillsEnabled, extensionPatterns };
+}
+
+function extensionName(ext: { path: string; sourceInfo: { source: string } }): string[] {
+  // Returns candidate names to match against patterns
+  const base = ext.path.split("/").pop() ?? ext.path;
+  const stem = base.replace(/\.[^.]+$/, ""); // strip extension
+  return [ext.sourceInfo.source, stem, ext.path];
+}
+
+function matchesGlob(value: string, pattern: string): boolean {
+  if (pattern === "*") return true;
+  // Escape regex special chars except *, then replace * with .*
+  const regexStr = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${regexStr}$`, "i").test(value);
+}
+
+function matchesAnyGlob(candidates: string[], patterns: string[]): boolean {
+  return candidates.some((name) => patterns.some((pattern) => matchesGlob(name, pattern)));
+}
+
 function createBtwResourceLoader(
   ctx: ExtensionCommandContext,
   appendSystemPrompt: string[] = [BTW_SYSTEM_PROMPT],
 ): ResourceLoader {
-  const extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
+  const config = parseBtwResourceConfig();
   const systemPrompt = stripDynamicSystemPromptFooter(ctx.getSystemPrompt());
 
+  let skillsLoader: DefaultResourceLoader | null = null;
+  let extensionsLoader: DefaultResourceLoader | null = null;
+
+  if (config.skillsEnabled) {
+    skillsLoader = new DefaultResourceLoader({
+      cwd: ctx.cwd,
+      agentDir: getAgentDir(),
+      noExtensions: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+  }
+
+  if (config.extensionPatterns !== null) {
+    extensionsLoader = new DefaultResourceLoader({
+      cwd: ctx.cwd,
+      agentDir: getAgentDir(),
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      extensionsOverride: (base: LoadExtensionsResult): LoadExtensionsResult => {
+        if (config.extensionPatterns === null) return base;
+        const filtered = base.extensions.filter((ext) =>
+          matchesAnyGlob(extensionName(ext), config.extensionPatterns!),
+        );
+        return { ...base, extensions: filtered };
+      },
+    });
+  }
+
+  const baseExtensionsResult: LoadExtensionsResult = {
+    extensions: [],
+    errors: [],
+    runtime: createExtensionRuntime(),
+  };
+
   return {
-    getExtensions: () => extensionsResult,
-    getSkills: () => ({ skills: [], diagnostics: [] }),
+    getExtensions: () => extensionsLoader?.getExtensions() ?? baseExtensionsResult,
+    getSkills: () => skillsLoader?.getSkills() ?? { skills: [], diagnostics: [] },
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => systemPrompt,
     getAppendSystemPrompt: () => appendSystemPrompt,
     extendResources: () => {},
-    reload: async () => {},
+    reload: async () => {
+      await skillsLoader?.reload();
+      await extensionsLoader?.reload();
+    },
   };
 }
 

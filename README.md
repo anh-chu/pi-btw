@@ -1,4 +1,6 @@
-# pi-btw
+# pi-btw (fork)
+
+> **This is a fork of [dbachelder/pi-btw](https://github.com/dbachelder/pi-btw)** with one addition: env-var configuration to pass skills and extensions into the BTW sub-session. See [BTW resource configuration](#btw-resource-configuration) below.
 
 A small [pi](https://github.com/badlogic/pi-mono) extension that adds a `/btw` side conversation channel.
 
@@ -167,6 +169,38 @@ BTW exchanges are persisted in the session as hidden custom entries so they:
 ### Visible saved notes
 
 If you use `--save`, that one BTW exchange is also written as a visible custom message in the session transcript.
+
+## BTW resource configuration
+
+By default, the BTW sub-session loads no extensions or skills — it is intentionally isolated from the main session. Two env vars opt into selective passthrough:
+
+### `PI_BTW_SKILLS_ENABLED`
+
+Set to `true` or `1` to load skills from the same locations as the main session.
+
+```bash
+export PI_BTW_SKILLS_ENABLED=true
+```
+
+### `PI_BTW_EXTENSIONS_INCLUDE`
+
+Comma-separated list of glob patterns. Extensions whose package name, filename stem, or full path matches any pattern are included in the BTW sub-session.
+
+```bash
+# include a specific extension by package name
+export PI_BTW_EXTENSIONS_INCLUDE=find-docs
+
+# include multiple extensions
+export PI_BTW_EXTENSIONS_INCLUDE=find-docs,shadcn-ui
+
+# wildcard prefix match
+export PI_BTW_EXTENSIONS_INCLUDE=pi-*
+
+# include everything
+export PI_BTW_EXTENSIONS_INCLUDE=*
+```
+
+The BTW sub-session always runs its own isolated extension runtime — included extensions are re-initialized independently and do not share state with the main session.
 
 ## Why
 
