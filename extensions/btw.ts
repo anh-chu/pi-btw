@@ -2087,8 +2087,20 @@ export default function (pi: ExtensionAPI) {
       const completedTurnId = transcriptState.lastTurnId ?? transcriptState.currentTurnId;
       const streamedThinking =
         completedTurnId !== null ? findLatestTranscriptEntry(transcriptState, completedTurnId, "thinking")?.text : "";
-      const answer = extractAnswer(response);
+      const rawAnswer = extractText(response.content, "text");
       const thinking = extractThinking(response) || streamedThinking || "";
+      const truncatedByLength = response.stopReason === "length";
+      const answer = rawAnswer || (truncatedByLength
+        ? "(Response cut off before any text was emitted — token budget exhausted during thinking.)"
+        : "(No text response)");
+
+      if (truncatedByLength) {
+        const note = rawAnswer
+          ? "⚠ Response cut off (token limit reached). Partial answer preserved."
+          : "⚠ Response cut off during thinking — no answer text. Try a shorter prompt, lower thinking level, or a model with a larger output budget.";
+        const turnIdForNote = completedTurnId ?? ensureTranscriptTurn(transcriptState);
+        upsertTranscriptTextEntry(transcriptState, turnIdForNote, "assistant-text", `${rawAnswer ? `${rawAnswer}\n\n` : ""}${note}`, false);
+      }
 
       const details: BtwDetails = {
         question,
@@ -2106,12 +2118,19 @@ export default function (pi: ExtensionAPI) {
       pi.appendEntry(BTW_ENTRY_TYPE, details);
 
       const saveState = saveVisibleBtwNote(pi, details, saveRequested, wasBusy);
+      const lengthSuffix = truncatedByLength ? " · ⚠ cut off by token limit" : "";
       if (saveState === "saved") {
-        notify(ctx, "Saved BTW note to the session.", "info");
-        setOverlayStatus("Saved BTW note to the session.", ctx);
+        notify(ctx, `Saved BTW note to the session.${truncatedByLength ? " Response was cut off by token limit." : ""}`, truncatedByLength ? "warning" : "info");
+        setOverlayStatus(`Saved BTW note to the session.${lengthSuffix}`, ctx);
       } else if (saveState === "queued") {
         notify(ctx, "BTW note queued to save after the current turn finishes.", "info");
-        setOverlayStatus("BTW note queued to save after the current turn finishes.", ctx);
+        setOverlayStatus(`BTW note queued to save after the current turn finishes.${lengthSuffix}`, ctx);
+      } else if (truncatedByLength) {
+        const message = rawAnswer
+          ? "Response cut off (token limit reached). Partial answer preserved in the thread."
+          : "Response cut off during thinking — no answer text. Try a shorter prompt, lower thinking level, or a model with a larger output budget.";
+        notify(ctx, message, "warning");
+        setOverlayStatus(message, ctx);
       } else {
         setOverlayStatus("Ready for a follow-up. Hidden BTW thread updated.", ctx);
       }
