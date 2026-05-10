@@ -278,6 +278,47 @@ function extractThinking(message: AssistantMessage): string {
   return extractText(message.content, "thinking");
 }
 
+// Some models (notably Claude Opus on multi-turn BTW threads where prior
+// thinking blocks were not reseeded with signatures) end up emitting
+// <thinking>...</thinking> as plain text and then ending the turn with no
+// real answer. Pull those out so the visible answer reflects only the actual
+// reply, and the thinking surface absorbs the mimicked block.
+const MIMICKED_THINKING_REGEX = /<thinking>([\s\S]*?)<\/thinking>/gi;
+
+function splitMimickedThinking(text: string): { mimickedThinking: string; cleanedText: string } {
+  if (!text || !text.includes("<thinking>")) {
+    return { mimickedThinking: "", cleanedText: text };
+  }
+
+  const mimickedChunks: string[] = [];
+  const cleaned = text
+    .replace(MIMICKED_THINKING_REGEX, (_match, inner: string) => {
+      const trimmed = inner.trim();
+      if (trimmed) mimickedChunks.push(trimmed);
+      return "";
+    })
+    .trim();
+
+  // If the model left a dangling <thinking> with no closing tag, treat
+  // everything after it as mimicked thinking (the model never produced an
+  // answer after the open tag).
+  const danglingIndex = cleaned.indexOf("<thinking>");
+  if (danglingIndex >= 0) {
+    const before = cleaned.slice(0, danglingIndex).trim();
+    const after = cleaned.slice(danglingIndex + "<thinking>".length).trim();
+    if (after) mimickedChunks.push(after);
+    return {
+      mimickedThinking: mimickedChunks.join("\n\n"),
+      cleanedText: before,
+    };
+  }
+
+  return {
+    mimickedThinking: mimickedChunks.join("\n\n"),
+    cleanedText: cleaned,
+  };
+}
+
 function parseBtwArgs(args: string): ParsedBtwArgs {
   const save = /(?:^|\s)(?:--save|-s)(?=\s|$)/.test(args);
   const question = args.replace(/(?:^|\s)(?:--save|-s)(?=\s|$)/g, " ").trim();
@@ -397,7 +438,11 @@ function buildBtwSeedState(
         },
         {
           role: "assistant",
-          content: [{ type: "text", text: entry.answer }],
+          // Strip any leftover <thinking>...</thinking> tags from prior
+          // answers before reseeding. Otherwise reasoning models can pick up
+          // the pattern from history and end the next turn after closing a
+          // mimicked tag with no real answer.
+          content: [{ type: "text", text: splitMimickedThinking(entry.answer).cleanedText || entry.answer }],
           provider: entry.provider,
           model: entry.model,
           api: entry.api || sessionModel?.api || ctx.model?.api || "openai-responses",
@@ -2087,19 +2132,44 @@ export default function (pi: ExtensionAPI) {
       const completedTurnId = transcriptState.lastTurnId ?? transcriptState.currentTurnId;
       const streamedThinking =
         completedTurnId !== null ? findLatestTranscriptEntry(transcriptState, completedTurnId, "thinking")?.text : "";
-      const rawAnswer = extractText(response.content, "text");
-      const thinking = extractThinking(response) || streamedThinking || "";
+      const responseText = extractText(response.content, "text");
+      const { mimickedThinking, cleanedText } = splitMimickedThinking(responseText);
+      const rawAnswer = cleanedText;
+      const realThinking = extractThinking(response) || streamedThinking || "";
+      const thinking = [realThinking, mimickedThinking].filter(Boolean).join("\n\n");
       const truncatedByLength = response.stopReason === "length";
+      const mimickedOnly = !!mimickedThinking && !rawAnswer;
       const answer = rawAnswer || (truncatedByLength
         ? "(Response cut off before any text was emitted — token budget exhausted during thinking.)"
-        : "(No text response)");
+        : mimickedOnly
+          ? "(Model emitted only a <thinking> block and stopped. No answer text.)"
+          : "(No text response)");
+
+      // Refresh the transcript so the visible turn matches the cleaned answer
+      // and the absorbed mimicked thinking, instead of literal <thinking> tags.
+      const turnIdForRefresh = completedTurnId ?? ensureTranscriptTurn(transcriptState);
+      if (thinking) {
+        upsertTranscriptTextEntry(transcriptState, turnIdForRefresh, "thinking", thinking, false);
+      }
+      if (mimickedThinking || cleanedText !== responseText) {
+        // Replace the streamed-text entry (which still holds the literal tags)
+        // with the cleaned answer.
+        upsertTranscriptTextEntry(
+          transcriptState,
+          turnIdForRefresh,
+          "assistant-text",
+          rawAnswer || (mimickedOnly
+            ? "⚠ Model emitted only a <thinking> block and stopped. Retry, lower /btw:thinking, or switch /btw:model."
+            : "⚠ No answer text emitted."),
+          false,
+        );
+      }
 
       if (truncatedByLength) {
         const note = rawAnswer
           ? "⚠ Response cut off (token limit reached). Partial answer preserved."
           : "⚠ Response cut off during thinking — no answer text. Try a shorter prompt, lower thinking level, or a model with a larger output budget.";
-        const turnIdForNote = completedTurnId ?? ensureTranscriptTurn(transcriptState);
-        upsertTranscriptTextEntry(transcriptState, turnIdForNote, "assistant-text", `${rawAnswer ? `${rawAnswer}\n\n` : ""}${note}`, false);
+        upsertTranscriptTextEntry(transcriptState, turnIdForRefresh, "assistant-text", `${rawAnswer ? `${rawAnswer}\n\n` : ""}${note}`, false);
       }
 
       const details: BtwDetails = {
@@ -2129,6 +2199,11 @@ export default function (pi: ExtensionAPI) {
         const message = rawAnswer
           ? "Response cut off (token limit reached). Partial answer preserved in the thread."
           : "Response cut off during thinking — no answer text. Try a shorter prompt, lower thinking level, or a model with a larger output budget.";
+        notify(ctx, message, "warning");
+        setOverlayStatus(message, ctx);
+      } else if (mimickedOnly) {
+        const message =
+          "Model emitted only a <thinking> block and stopped. Retry, lower /btw:thinking, or switch /btw:model.";
         notify(ctx, message, "warning");
         setOverlayStatus(message, ctx);
       } else {
